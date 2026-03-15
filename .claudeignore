@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / Widget build
+node_modules/
+dist/
+build/
+*.min.js
+
+# ML Model files (large binaries — never read into context)
+*.onnx
+*.bin
+*.pt
+*.safetensors
+models/
+
+# Docker runtime volumes
+docker/volumes/
+docker/data/
+
+# Environment & secrets (critical — never expose)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Test coverage
+htmlcov/
+.coverage
+coverage.xml
