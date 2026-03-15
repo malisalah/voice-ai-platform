@@ -33,16 +33,20 @@ This document breaks the full build into 10 numbered phases, ordered by dependen
 
 **Goal:** Implement tenant management CRUD operations and API key lifecycle.
 
-**Files to create:**
+**Files created:**
 - `services/tenant-service/app/__init__.py`
 - `services/tenant-service/app/routers/__init__.py`
-- `services/tenant-service/app/routers/tenants.py` — POST /tenants, GET /tenants/{id}, DELETE /tenants/{id}
-- `services/tenant-service/app/routers/api_keys.py` — POST /tenants/{id}/api-keys, GET /tenants/{id}/api-keys, ROTATE /tenants/{id}/api-keys/{key_id}/rotate, REVOKE /tenants/{id}/api-keys/{key_id}/revoke
+- `services/tenant-service/app/routers/tenants.py` — POST /tenants, GET /tenants/{id}, DELETE /tenants/{id}, PATCH /tenants/{id}
+- `services/tenant-service/app/routers/api_keys.py` — POST /tenants/{id}/api-keys, GET /tenants/{id}/api-keys, POST /tenants/{id}/api-keys/{key_id}/rotate, PATCH /tenants/{id}/api-keys/{key_id}/revoke, DELETE /tenants/{id}/api-keys/{key_id}
 - `services/tenant-service/app/services/__init__.py`
 - `services/tenant-service/app/services/tenant_service.py` — business logic for tenant CRUD
 - `services/tenant-service/app/services/api_key_service.py` — API key generation, hashing (bcrypt), rotation
 - `services/tenant-service/app/models/__init__.py`
 - `services/tenant-service/app/models/schemas.py` — Request/response Pydantic models
+- `services/tenant-service/app/utils/__init__.py`
+- `services/tenant-service/app/utils/crypto.py` — secure random key generation (32-char hex via secrets)
+- `services/tenant-service/app/db/__init__.py`
+- `services/tenant-service/app/db/repository.py` — PostgreSQL queries using async SQLAlchemy
 - `services/tenant-service/main.py` — FastAPI app factory
 - `services/tenant-service/config.py` — Pydantic Settings for DB, Redis, tenant defaults
 - `services/tenant-service/requirements.txt`
@@ -55,6 +59,8 @@ This document breaks the full build into 10 numbered phases, ordered by dependen
 - Multi-tenant isolation enforced at query level
 
 **Estimated Complexity:** Medium
+
+**Status:** ✅ Complete
 
 ---
 

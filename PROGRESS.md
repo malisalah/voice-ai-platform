@@ -52,26 +52,63 @@ This file tracks progress across all phases of the implementation plan.
 
 **Goal:** Implement tenant management CRUD operations and API key lifecycle.
 
-**Files to create:**
+**Files created (18 files):**
 - `services/tenant-service/app/__init__.py`
 - `services/tenant-service/app/routers/__init__.py`
-- `services/tenant-service/app/routers/tenants.py` — POST /tenants, GET /tenants/{id}, DELETE /tenants/{id}
-- `services/tenant-service/app/routers/api_keys.py` — POST /tenants/{id}/api-keys, GET /tenants/{id}/api-keys, ROTATE /tenants/{id}/api-keys/{key_id}/rotate, REVOKE /tenants/{id}/api-keys/{key_id}/revoke
+- `services/tenant-service/app/routers/tenants.py` — POST/GET/DELETE/PATCH /tenants, soft delete pattern
+- `services/tenant-service/app/routers/api_keys.py` — POST/GET/ROTATE/REVOKE /api-keys endpoints
 - `services/tenant-service/app/services/__init__.py`
 - `services/tenant-service/app/services/tenant_service.py` — business logic for tenant CRUD
-- `services/tenant-service/app/services/api_key_service.py` — API key generation, hashing (bcrypt), rotation
+- `services/tenant-service/app/services/api_key_service.py` — bcrypt hashing, key rotation
 - `services/tenant-service/app/models/__init__.py`
-- `services/tenant-service/app/models/schemas.py` — Request/response Pydantic models
+- `services/tenant-service/app/models/schemas.py` — consolidated request/response models
+- `services/tenant-service/app/utils/__init__.py`
+- `services/tenant-service/app/utils/crypto.py` — `secrets.token_hex(32)` for 64-char hex keys
+- `services/tenant-service/app/db/__init__.py`
+- `services/tenant-service/app/db/repository.py` — async SQLAlchemy queries
 - `services/tenant-service/main.py` — FastAPI app factory
-- `services/tenant-service/config.py` — Pydantic Settings for DB, Redis, tenant defaults
+- `services/tenant-service/config.py` — Pydantic Settings
 - `services/tenant-service/requirements.txt`
 - `services/tenant-service/Dockerfile`
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
+
+**Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /tenants | Create tenant with initial API key |
+| GET | /tenants/{id} | Get tenant by ID |
+| GET | /tenants | List tenants (limit, offset) |
+| DELETE | /tenants/{id} | Soft delete tenant (is_active=False) |
+| PATCH | /tenants/{id} | Update tenant |
+| POST | /tenants/{id}/api-keys | Create API key |
+| GET | /tenants/{id}/api-keys | List API keys |
+| POST | /tenants/{id}/api-keys/{key_id}/rotate | Rotate API key (generates new key) |
+| PATCH | /tenants/{id}/api-keys/{key_id}/revoke | Revoke API key (sets is_active=False) |
+
+**API Key Features:**
+- Generated using `secrets.token_hex(32)` (64-char hex string)
+- Hashed with bcrypt before storing — never stored in plaintext
+- Plain key returned ONLY once at creation (display once, never again)
+- Rotation generates new key and invalidates old one
+- Revoke marks key inactive without deletion
+
+**Tests:** 11 integration tests passing in `tests/integration/test_tenant_service.py`
 
 **Dependencies:**
 - Import from `shared.models.tenants` for Tenant and APIKey models
 - Import from `shared.db.base` for async session management
+- Import from `shared.utils.auth` for JWT helpers
+- Import from `shared.utils.errors` for custom exceptions
+- Import from `shared.utils.logging` for structured logging
+
+**Notes:**
+- `schemas.py` consolidates both request (e.g., `TenantCreateRequest`, `APIKeyCreateRequest`) and response models
+- ROTATE and REVOKE endpoints use HTTP POST and PATCH as per REST conventions
+- Soft delete pattern (is_active=False) preserves historical data for audit trails
+- **Phase 3 Flag:** Gateway service must verify API keys against tenant-service using `bcrypt.checkpw()` — never implement custom hashing
+
+---
 
 ---
 
@@ -248,12 +285,18 @@ This file tracks progress across all phases of the implementation plan.
 
 ---
 
+**Test Results:**
+- Phase 1: 14 unit tests passing in `tests/unit/test_shared.py`
+- Phase 2: 11 integration tests passing in `tests/integration/test_tenant_service.py`
+
+---
+
 ## Summary
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| 1 | Shared Foundation | ✅ Complete |
-| 2 | Tenant Service | ⬜ Not Started |
+| 1 | Shared Foundation | ✅ Complete (14 unit tests) |
+| 2 | Tenant Service | ✅ Complete (11 integration tests) |
 | 3 | Gateway Service | ⬜ Not Started |
 | 4 | Crawler Service | ⬜ Not Started |
 | 5 | Knowledge Service | ⬜ Not Started |
@@ -261,4 +304,4 @@ This file tracks progress across all phases of the implementation plan.
 | 7 | Voice Service | ⬜ Not Started |
 | 8 | Web Widget | ⬜ Not Started |
 | 9 | Docker Composition | ⬜ Not Started |
-| 10 | Integration Tests | ⬜ Not Started |
+| 10 | Integration Tests | ⬜ Not Started (test_tenant_service.py ready) |

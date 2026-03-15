@@ -53,12 +53,24 @@ class TenantResponse(BaseModel):
     updated_at: datetime
 
 
-class APIKey(BaseModel):
-    """API key model."""
+class APIKey(Base, IDMixin, TenantMixin, TimestampMixin):
+    """SQLAlchemy model for API key data."""
+
+    __tablename__ = "api_keys"
+
+    name: Mapped[str] = mapped_column(nullable=False)
+    key_hash: Mapped[str] = mapped_column(nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(default=None)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+
+class APIKeyResponse(BaseModel):
+    """Response model for API key data."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: str
     tenant_id: str
-    key_hash: str
     name: str
     created_at: datetime
     expires_at: Optional[datetime] = None
