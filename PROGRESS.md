@@ -19,7 +19,32 @@ This file tracks progress across all phases of the implementation plan.
 - `shared/models/crawl.py` — CrawlJob schema (id, tenant_id, url, status, stats, created_at, updated_at)
 - `shared/models/chunks.py` — Chunk schema (id, tenant_id, url, chunk_index, content, metadata, embedding_hash, created_at)
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
+
+**Tests:** 7 unit tests passing in `tests/unit/test_shared.py`
+
+**Files created:**
+- `shared/__init__.py`
+- `shared/models/__init__.py`
+- `shared/models/base.py` — SQLAlchemy declarative base with mixins (IDMixin, TimestampMixin, TenantMixin)
+- `shared/models/tenants.py` — Tenant schema with id, name, website_url, api_key_hash, created_at, updated_at
+- `shared/models/crawl.py` — CrawlJob schema with id, tenant_id, url, status, stats, created_at, updated_at
+- `shared/models/chunks.py` — Chunk schema with id, tenant_id, url, chunk_index, content, chunk_metadata, embedding_hash, created_at, updated_at
+- `shared/utils/__init__.py`
+- `shared/utils/logging.py` — structlog configuration with JSON output
+- `shared/utils/auth.py` — JWT encode/decode helpers using python-jose
+- `shared/utils/errors.py` — Custom exception classes (APIError, AuthError, etc.)
+- `shared/db/__init__.py`
+- `shared/db/base.py` — Async SQLAlchemy engine and session factory using DATABASE_URL
+- `shared/db/migrations/__init__.py`
+- `shared/db/migrations/alembic.ini`
+- `shared/db/migrations/env.py`
+- `shared/db/migrations/script.py.mako` — Alembic migration template
+
+**Notes:**
+- `metadata` renamed to `chunk_metadata` in chunks model (reserved word in SQLAlchemy)
+- `embedding_hash` field added to chunks model for deduplication
+- All models use `Mapped[]` type hints for SQLAlchemy 2.0 compatibility
 
 ---
 
@@ -43,6 +68,10 @@ This file tracks progress across all phases of the implementation plan.
 - `services/tenant-service/Dockerfile`
 
 **Status:** ⬜ Not Started
+
+**Dependencies:**
+- Import from `shared.models.tenants` for Tenant and APIKey models
+- Import from `shared.db.base` for async session management
 
 ---
 
@@ -223,7 +252,7 @@ This file tracks progress across all phases of the implementation plan.
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| 1 | Shared Foundation | ⬜ Not Started |
+| 1 | Shared Foundation | ✅ Complete |
 | 2 | Tenant Service | ⬜ Not Started |
 | 3 | Gateway Service | ⬜ Not Started |
 | 4 | Crawler Service | ⬜ Not Started |
