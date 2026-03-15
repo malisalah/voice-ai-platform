@@ -1,0 +1,60 @@
+from .middleware.auth import AuthMiddleware
+from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.tenant import TenantMiddleware
+    app.include_router(auth.router, prefix="", tags=["Authentication"])
+    # 1. CORS
+    # 2. Auth
+    # 3. Tenant
+    app.add_middleware(create_cors_middleware)
+    app.add_middleware(AuthMiddleware)
+    app.add_middleware(TenantMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    Extracts tenant_id from JWT payload and attaches to request.state.
+        # Validate token and extract tenant_id
+            from ..services.auth_service import extract_tenant_id_from_token
+            tenant_id = extract_tenant_id_from_token(token)
+            request.state.tenant_id = tenant_id
+            request.state.token = token
+                tenant_id=tenant_id,
+    Extracts tenant_id from JWT payload and attaches to request.state.
+        # Validate token and extract tenant_id
+            from ..services.auth_service import extract_tenant_id_from_token
+            tenant_id = extract_tenant_id_from_token(token)
+            request.state.tenant_id = tenant_id
+            request.state.token = token
+                tenant_id=tenant_id,
+from ..utils.redis import get_redis_client
+    client = await get_redis_client()
+    pipe.zremrangebyscore(key, "-inf", window_start)
+    pipe.zadd(key, {str(now): now})
+    pipe.zcard(key)
+    client = await get_redis_client()
+    pipe.zremrangebyscore(key, "-inf", window_start)
+    pipe.zcard(key)
+    client = await get_redis_client()
+    headers: Dict[str, str],
+    tenant_id: Optional[str] = None,
+        headers: Request headers
+        tenant_id: Tenant ID from JWT (optional, will add to headers)
+        Response dict with status_code, headers, and body
+    # Prepare headers - preserve important headers
+    proxy_headers = {
+        for k, v in headers.items()
+    # Add tenant_id header if available
+    if tenant_id:
+        proxy_headers["x-tenant-id"] = tenant_id
+        tenant_id=tenant_id,
+                headers=proxy_headers,
+                "headers": dict(response.headers),
+    headers: Optional[Dict[str, str]] = None,
+        headers: Additional headers
+    proxy_headers = headers or {}
+                headers=proxy_headers,
+"""Redis client singleton for gateway service."""
+_redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    return os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    """Get Redis client singleton."""
+        _redis_client = redis.from_url(redis_url, decode_responses=True)
+EXPOSE 8000
+    CMD curl -f http://localhost:8000/health || exit 1
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

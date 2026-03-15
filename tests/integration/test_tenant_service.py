@@ -9,12 +9,93 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import sessionmaker
 
-# Add tenant-service to path
-sys.path.insert(0, "/home/mali/voice-ai-platform/services/tenant-service")
+# Paths
+_gateway_path = "/home/mali/voice-ai-platform/services/gateway"
+_tenant_service_path = "/home/mali/voice-ai-platform/services/tenant-service"
+_shared_path = "/home/mali/voice-ai-platform/shared"
+_root_path = "/home/mali/voice-ai-platform"
 
-from shared.db.base import get_session
-from shared.models.base import Base
-from shared.utils.auth import create_token
+
+def _cleanup_all_service_paths():
+    """Remove all service paths from sys.path."""
+    for path in [_gateway_path, _tenant_service_path, _shared_path, _root_path]:
+        if path in sys.path:
+            sys.path.remove(path)
+
+
+def _setup_tenant_service_paths():
+    """Set up paths for tenant-service tests.
+
+    The order matters! Tenant-service path must come first so that
+    'app' imports resolve to tenant-service's app package, not gateway's.
+    """
+    _cleanup_all_service_paths()
+    # Add paths with tenant-service first, then shared
+    # Note: Root path should NOT be added as it would make gateway's 'app'
+    # package accessible before tenant-service's
+    if _tenant_service_path not in sys.path:
+        sys.path.insert(0, _tenant_service_path)
+    if _shared_path not in sys.path:
+        sys.path.insert(0, _shared_path)
+
+
+def _clear_all_service_modules():
+    """Clear both gateway and tenant-service modules from cache."""
+    _clear_gateway_modules()
+    _clear_tenant_service_modules()
+
+
+def _clear_tenant_service_modules():
+    """Clear tenant-service app modules from cache."""
+    print(f"[TENANT] _clear_tenant_service_modules() called")
+    modules_to_clear = [
+        "app",
+        "app.routers",
+        "app.models",
+        "app.services",
+        "app.jobs",
+    ]
+    for mod_name in list(sys.modules.keys()):
+        if any(mod_name == m or mod_name.startswith(m + ".") for m in modules_to_clear):
+            print(f"[TENANT] Deleting: {mod_name}")
+            del sys.modules[mod_name]
+
+
+def _clear_gateway_modules():
+    """Clear gateway modules from cache to avoid conflicts."""
+    print(f"[TENANT] _clear_gateway_modules() called")
+    modules_to_clear = [
+        "app",
+        "app.routers",
+        "app.models",
+        "app.services",
+    ]
+    for mod_name in list(sys.modules.keys()):
+        if any(mod_name == m or mod_name.startswith(m + ".") for m in modules_to_clear):
+            print(f"[TENANT] Deleting: {mod_name}")
+            del sys.modules[mod_name]
+
+
+# Module-level setup - called at module import time
+# This ensures tenant-service paths are set up before module imports
+# and gateway modules are cleared if they were cached
+# Import conftest helper functions
+from .conftest import set_service_paths, clear_service_modules
+
+# Set up tenant paths
+print(f"[TENANT] Before set_service_paths: sys.path[:3] = {sys.path[:3]}")
+set_service_paths("tenant")
+print(f"[TENANT] After set_service_paths: sys.path[:3] = {sys.path[:3]}")
+
+# Clear gateway modules that might interfere using conftest function
+print(f"[TENANT] Before clear_service_modules")
+clear_service_modules()
+print(f"[TENANT] After clear_service_modules")
+
+# Clear tenant service modules too
+print(f"[TENANT] Before _clear_tenant_service_modules")
+_clear_tenant_service_modules()
+print(f"[TENANT] After _clear_tenant_service_modules")
 
 
 @pytest.fixture(scope="module")
@@ -71,6 +152,11 @@ def auth_headers():
         algorithm="HS256",
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+# Import models from shared
+from shared.models.base import Base
+from shared.utils.auth import create_token
 
 
 # Test 1: test_create_tenant
