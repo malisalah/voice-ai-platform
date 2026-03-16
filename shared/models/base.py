@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import DateTime, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -22,6 +23,7 @@ class IDMixin:
         primary_key=True,
         index=True,
         nullable=False,
+        default=lambda: str(uuid4()),
     )
 
 

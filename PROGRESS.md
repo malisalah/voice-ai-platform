@@ -166,6 +166,7 @@ This file tracks progress across all phases of the implementation plan.
 |-----------|-------|--------|
 | `tests/integration/test_gateway.py` | 16 | ✅ All passing |
 | `tests/integration/test_tenant_service.py` | 11 | ✅ All passing (when run alone) |
+| `tests/integration/test_crawler_service.py` | 12 | ✅ All passing |
 
 ### Known Issues
 
@@ -189,7 +190,8 @@ FAILED tests/integration/test_tenant_service.py::test_create_tenant - ImportErro
 **Current Workaround:**
 - Run gateway tests: `pytest tests/integration/test_gateway.py -v`
 - Run tenant-service tests: `pytest tests/integration/test_tenant_service.py -v`
-- Do NOT run both together: `pytest tests/integration/ -v` (fails)
+- Run crawler-service tests: `pytest tests/integration/test_crawler_service.py -v`
+- Do NOT run gateway and tenant-service together: `pytest tests/integration/ -v` (fails)
 
 **Files Affected:**
 - `tests/integration/test_gateway.py` — gateway_test_setup fixture with session scope
@@ -204,22 +206,63 @@ FAILED tests/integration/test_tenant_service.py::test_create_tenant - ImportErro
 
 **Goal:** Build web crawler that fetches pages, cleans HTML, chunks text, and prepares for PocketFlow ingestion.
 
-**Files to create:**
+**Files created (25 files):**
+- `services/crawler-service/__init__.py`
+- `services/crawler-service/main.py` — FastAPI app factory with startup/shutdown events
+- `services/crawler-service/config.py` — Pydantic Settings for all env variables
+- `services/crawler-service/requirements.txt` — Dependencies (httpx, celery, redis, beautifulsoup4, lxml)
+- `services/crawler-service/Dockerfile`
+- `services/crawler-service/tasks/__init__.py` — Celery task exports
+- `services/crawler-service/tasks/crawl_task.py` — Full pipeline Celery task with retries
 - `services/crawler-service/app/__init__.py`
 - `services/crawler-service/app/routers/__init__.py`
-- `services/crawler-service/app/routers/crawl.py` — POST /crawl (trigger crawl), GET /crawl/{job_id} (status)
+- `services/crawler-service/app/routers/crawl.py` — POST /crawl, GET /crawl/{job_id}, GET /crawl/{job_id}/chunks
+- `services/crawler-service/app/routers/status.py` — GET /crawl/{job_id}/status, GET /crawl?tenant_id=
 - `services/crawler-service/app/services/__init__.py`
-- `services/crawler-service/app/services/crawler.py` — async web crawler with politeness (robots.txt, delays)
-- `services/crawler-service/app/services/html_cleaner.py` — Remove scripts, styles, nav, footers
-- `services/crawler-service/app/services/chunker.py` — Text chunking with overlap, metadata (sentence count, word count)
+- `services/crawler-service/app/services/crawler.py` — httpx-based async crawler with politeness
+- `services/crawler-service/app/services/html_cleaner.py` — Remove nav, footer, header, script, style, iframe
+- `services/crawler-service/app/services/chunker.py` — Text chunking with configurable size/overlap
+- `services/crawler-service/app/services/indexer.py` — HTTP client to knowledge-service with 3 retries
 - `services/crawler-service/app/models/__init__.py`
-- `services/crawler-service/app/models/schemas.py` — CrawlJob, Page, Chunk schemas
-- `services/crawler-service/main.py`
-- `services/crawler-service/config.py`
-- `services/crawler-service/requirements.txt` (aiohttp, beautifulsoup4, lxml)
-- `services/crawler-service/Dockerfile`
+- `services/crawler-service/app/models/schemas.py` — Pydantic models
+- `services/crawler-service/app/utils/__init__.py`
+- `services/crawler-service/app/utils/url.py` — URL normalization, deduplication
+- `services/crawler-service/app/utils/robots.py` — robots.txt checking with per-domain caching
+- `services/crawler-service/app/db/__init__.py`
+- `services/crawler-service/app/db/repository.py` — Async CRUD for CrawlJob
 
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
+
+**Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /crawl | Trigger crawl (returns 202 with job_id) |
+| GET | /crawl/{job_id}/status | Get crawl job status |
+| GET | /crawl/{job_id} | Get crawl job (legacy) |
+| GET | /crawl/{job_id}/chunks | Get chunks from completed crawl |
+| GET | /crawl | List jobs by tenant_id (query param) |
+
+**Key Features:**
+- `tasks/` folder at service root (not inside `app/`) — Celery tasks are at top level
+- `html_cleaner.py` replaces `parser.py` — clean HTML by removing nav, footer, header, script, style, iframe, svg, canvas
+- `robots.py` caches per domain — caches robots.txt rules per domain to avoid repeated fetches
+- `indexer.py` retries 3 times on failure — exponential backoff with configurable delay
+- 12 integration tests passing in `tests/integration/test_crawler_service.py`
+
+**Dependencies:**
+- Import from `shared.models.crawl` for CrawlJob model
+- Import from `shared.db.base` for async session management
+- Import from `shared.utils.errors` for custom exceptions
+- Import from `shared.utils.logging` for structured logging
+
+**Notes:**
+- Crawler uses httpx for async HTTP (not aiohttp)
+- robots.txt checking implemented with caching (caches per domain)
+- HTML cleaner removes: nav, footer, header, script, style, iframe, svg, canvas, noscript, aside
+- Chunker supports both sentence-sensitive (default) and word-based chunking
+- Status endpoint uses in-memory storage for tests (production uses database)
+
+---
 
 ---
 
@@ -241,6 +284,22 @@ FAILED tests/integration/test_tenant_service.py::test_create_tenant - ImportErro
 - `services/knowledge-service/config.py`
 - `services/knowledge-service/requirements.txt` (pocketflow, sentence-transformers)
 - `services/knowledge-service/Dockerfile`
+
+**API Contract (must expose for crawler-service):**
+- `POST /ingest` endpoint accepting:
+  ```json
+  {
+    "tenant_id": "uuid",
+    "source_url": "https://example.com",
+    "chunks": [
+      {
+        "content": "chunk text",
+        "chunk_index": 0,
+        "metadata": {}
+      }
+    ]
+  }
+  ```
 
 **Status:** ⬜ Not Started
 
@@ -338,10 +397,10 @@ FAILED tests/integration/test_tenant_service.py::test_create_tenant - ImportErro
 | 1 | Shared Foundation | ✅ Complete (14 unit tests) |
 | 2 | Tenant Service | ✅ Complete (11 integration tests) |
 | 3 | Gateway Service | ✅ Complete (16 integration tests) |
-| 4 | Crawler Service | ⬜ Not Started |
-| 5 | Knowledge Service | ⬜ Not Started |
+| 4 | Crawler Service | ✅ Complete (25 files, 12 integration tests) |
+| 5 | Knowledge Service | ⬜ Not Started (requires POST /ingest endpoint) |
 | 6 | LLM Service | ⬜ Not Started |
 | 7 | Voice Service | ⬜ Not Started |
 | 8 | Web Widget | ⬜ Not Started |
 | 9 | Docker Composition | ⬜ Not Started |
-| 10 | Integration Tests | ✅ Complete (test infrastructure ready, module caching issue prevents running all together) |
+| 10 | Integration Tests | ✅ Complete (test infrastructure ready, module caching issue prevents gateway+tenant running together) |
