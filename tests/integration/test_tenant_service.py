@@ -1,5 +1,13 @@
-"""Integration tests for tenant-service using pytest."""
+"""Integration tests for tenant-service using pytest.
 
+Tests should be run with:
+    pytest tests/integration/test_tenant_service.py -v
+
+When running multiple test files, the conftest.py in tests/integration/ will
+manage path and module isolation.
+"""
+
+import asyncio
 import sys
 
 import pytest
@@ -10,92 +18,62 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import sessionmaker
 
 # Paths
-_gateway_path = "/home/mali/voice-ai-platform/services/gateway"
-_tenant_service_path = "/home/mali/voice-ai-platform/services/tenant-service"
-_shared_path = "/home/mali/voice-ai-platform/shared"
-_root_path = "/home/mali/voice-ai-platform"
+_GATEWAY_PATH = "/home/mali/voice-ai-platform/services/gateway"
+_TENANT_SERVICE_PATH = "/home/mali/voice-ai-platform/services/tenant-service"
+_SHARED_PATH = "/home/mali/voice-ai-platform/shared"
+_ROOT_PATH = "/home/mali/voice-ai-platform"
 
 
-def _cleanup_all_service_paths():
-    """Remove all service paths from sys.path."""
-    for path in [_gateway_path, _tenant_service_path, _shared_path, _root_path]:
-        if path in sys.path:
-            sys.path.remove(path)
-
-
-def _setup_tenant_service_paths():
+def _setup_paths_for_tenant():
     """Set up paths for tenant-service tests.
 
     The order matters! Tenant-service path must come first so that
     'app' imports resolve to tenant-service's app package, not gateway's.
     """
-    _cleanup_all_service_paths()
-    # Add paths with tenant-service first, then shared
-    # Note: Root path should NOT be added as it would make gateway's 'app'
-    # package accessible before tenant-service's
-    if _tenant_service_path not in sys.path:
-        sys.path.insert(0, _tenant_service_path)
-    if _shared_path not in sys.path:
-        sys.path.insert(0, _shared_path)
+    # Remove all service paths first
+    for path in [_GATEWAY_PATH, _TENANT_SERVICE_PATH, _SHARED_PATH, _ROOT_PATH]:
+        if path in sys.path:
+            sys.path.remove(path)
+
+    # Add paths in reverse order so tenant-service is at position 0
+    # Root path is added first (at position 0), then shared, then tenant
+    # After all inserts, the order will be: [tenant, shared, root, ...]
+    if _TENANT_SERVICE_PATH not in sys.path:
+        sys.path.insert(0, _TENANT_SERVICE_PATH)
+    if _SHARED_PATH not in sys.path:
+        sys.path.insert(0, _SHARED_PATH)
+    if _ROOT_PATH not in sys.path:
+        sys.path.insert(0, _ROOT_PATH)
 
 
-def _clear_all_service_modules():
-    """Clear both gateway and tenant-service modules from cache."""
-    _clear_gateway_modules()
-    _clear_tenant_service_modules()
-
-
-def _clear_tenant_service_modules():
-    """Clear tenant-service app modules from cache."""
-    print(f"[TENANT] _clear_tenant_service_modules() called")
-    modules_to_clear = [
-        "app",
-        "app.routers",
-        "app.models",
-        "app.services",
-        "app.jobs",
-    ]
+def _clear_service_modules():
+    """Clear service modules from cache to avoid import conflicts."""
+    modules_to_clear = []
     for mod_name in list(sys.modules.keys()):
-        if any(mod_name == m or mod_name.startswith(m + ".") for m in modules_to_clear):
-            print(f"[TENANT] Deleting: {mod_name}")
+        if mod_name.startswith("app.") or mod_name == "app":
+            modules_to_clear.append(mod_name)
+        if mod_name.startswith("main.") or mod_name == "main":
+            modules_to_clear.append(mod_name)
+
+    for mod_name in modules_to_clear:
+        if mod_name in sys.modules:
             del sys.modules[mod_name]
 
-
-def _clear_gateway_modules():
-    """Clear gateway modules from cache to avoid conflicts."""
-    print(f"[TENANT] _clear_gateway_modules() called")
-    modules_to_clear = [
-        "app",
-        "app.routers",
-        "app.models",
-        "app.services",
-    ]
-    for mod_name in list(sys.modules.keys()):
-        if any(mod_name == m or mod_name.startswith(m + ".") for m in modules_to_clear):
-            print(f"[TENANT] Deleting: {mod_name}")
-            del sys.modules[mod_name]
+    importlib = __import__("importlib")
+    importlib.invalidate_caches()
 
 
-# Module-level setup - called at module import time
-# This ensures tenant-service paths are set up before module imports
-# and gateway modules are cleared if they were cached
-# Import conftest helper functions
-from .conftest import set_service_paths, clear_service_modules
+@pytest.fixture(scope="function", autouse=True)
+def tenant_service_test_setup():
+    """Set up paths and clear modules before each test.
 
-# Set up tenant paths
-print(f"[TENANT] Before set_service_paths: sys.path[:3] = {sys.path[:3]}")
-set_service_paths("tenant")
-print(f"[TENANT] After set_service_paths: sys.path[:3] = {sys.path[:3]}")
-
-# Clear gateway modules that might interfere using conftest function
-print(f"[TENANT] Before clear_service_modules")
-clear_service_modules()
-print(f"[TENANT] After clear_service_modules")
-
-# Clear tenant service modules too
-print(f"[TENANT] Before _clear_tenant_service_modules")
-_clear_tenant_service_modules()
-print(f"[TENANT] After _clear_tenant_service_modules")
+    Using function scope ensures each test starts fresh with correct paths.
+    """
+    _clear_service_modules()
+    _setup_paths_for_tenant()
+    yield
+    # Cleanup after test
+    _clear_service_modules()
 
 
 @pytest.fixture(scope="module")
@@ -110,7 +88,7 @@ def test_engine():
 
 @pytest.fixture
 def test_session(test_engine):
-    """Create a test database session (synchronous, non-async fixture)."""
+    """Create a test database session."""
     session_factory = sessionmaker(
         test_engine,
         class_=AsyncSession,
@@ -119,9 +97,10 @@ def test_session(test_engine):
         autoflush=False,
     )
 
-    # Create tables
-    import asyncio
+    # Import after paths are set
+    from shared.models.base import Base
 
+    # Create tables
     async def create_tables():
         async with test_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -146,6 +125,8 @@ def test_session(test_engine):
 @pytest.fixture
 def auth_headers():
     """Create authentication headers with a valid JWT."""
+    from shared.utils.auth import create_token
+
     token = create_token(
         subject="test-tenant-id",
         secret_key="test-secret-key-for-testing",
@@ -154,7 +135,7 @@ def auth_headers():
     return {"Authorization": f"Bearer {token}"}
 
 
-# Import models from shared
+# Import models from shared - after paths are set
 from shared.models.base import Base
 from shared.utils.auth import create_token
 
@@ -259,11 +240,10 @@ def test_soft_delete_tenant(test_session, auth_headers):
 
     # Verify tenant is no longer accessible (is_active=False)
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from shared.models.tenants import Tenant
+    from shared.models.tenants import Tenant as TenantModel
 
     async def check_deleted():
-        result = await test_session.execute(select(Tenant).where(Tenant.tenant_id == "soft-delete"))
+        result = await test_session.execute(select(TenantModel).where(TenantModel.tenant_id == "soft-delete"))
         deleted_tenant = result.scalar_one_or_none()
         assert deleted_tenant.is_active is False
 
@@ -310,10 +290,10 @@ def test_api_key_stored_as_bcrypt_hash(test_session, auth_headers):
 
     # Verify key is stored as bcrypt hash by checking the hash format
     from sqlalchemy import select
-    from shared.models.tenants import APIKey
+    from shared.models.tenants import APIKey as APIKeyModel
 
     async def check_hash():
-        result = await test_session.execute(select(APIKey).where(APIKey.id == key_data.id))
+        result = await test_session.execute(select(APIKeyModel).where(APIKeyModel.id == key_data.id))
         stored_key = result.scalar_one_or_none()
         # The hash should start with $2b$, $2a$, or $2y$ (bcrypt format)
         assert stored_key.key_hash.startswith("$2")
@@ -410,6 +390,4 @@ def test_list_api_keys_does_not_expose_hash(test_session, auth_headers):
 # Helper function to run async code in sync context
 def asyncio_run(coro):
     """Run an async coroutine in a synchronous context."""
-    import asyncio
-
     return asyncio.run(coro)

@@ -1,8 +1,16 @@
-"""Integration tests for gateway service using pytest."""
+"""Integration tests for gateway service using pytest.
+
+Tests should be run with:
+    pytest tests/integration/test_gateway.py -v
+
+When running multiple test files, each test file manages its own paths and modules.
+This avoids conflicts between gateway and tenant-service tests.
+"""
 
 import asyncio
 import bcrypt
 import httpcore
+import importlib
 import os
 import secrets
 import sys
@@ -11,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, Response
+from httpx import AsyncClient, Response, ASGITransport
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
@@ -19,7 +27,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import sessionmaker
 
 # Set environment variables BEFORE importing anything else
-# This ensures service URLs are set before the proxy module is imported
 os.environ["JWT_SECRET_KEY"] = "test-secret-key"
 os.environ["TENANT_SERVICE_URL"] = "http://localhost:8005"
 os.environ["VOICE_SERVICE_URL"] = "http://localhost:8001"
@@ -28,36 +35,42 @@ os.environ["KNOWLEDGE_SERVICE_URL"] = "http://localhost:8003"
 os.environ["CRAWLER_SERVICE_URL"] = "http://localhost:8004"
 os.environ["REDIS_URL"] = "redis://nonexistent:6379/0"
 
-# Add paths - insert gateway first, then shared, then root
-# This allows importing gateway's app.routers, etc.
-gateway_path = "/home/mali/voice-ai-platform/services/gateway"
-shared_path = "/home/mali/voice-ai-platform/shared"
-root_path = "/home/mali/voice-ai-platform"
-
-_gateway_sys_path_inserted = False
+# Paths
+_GATEWAY_PATH = "/home/mali/voice-ai-platform/services/gateway"
+_SHARED_PATH = "/home/mali/voice-ai-platform/shared"
+_ROOT_PATH = "/home/mali/voice-ai-platform"
 
 
-def _insert_paths():
-    """Insert gateway paths - only do this once per process."""
-    global _gateway_sys_path_inserted
-    if _gateway_sys_path_inserted:
-        return
-
-    if gateway_path not in sys.path:
-        sys.path.insert(0, gateway_path)
-    if shared_path not in sys.path:
-        sys.path.insert(0, shared_path)
-    if root_path not in sys.path:
-        sys.path.insert(0, root_path)
-
-    _gateway_sys_path_inserted = True
-
-
-def _remove_paths():
-    """Remove gateway paths."""
-    for path in [gateway_path, shared_path, root_path]:
+def _setup_paths():
+    """Set up paths for gateway tests."""
+    # Remove all service paths first
+    for path in [_GATEWAY_PATH, _SHARED_PATH, _ROOT_PATH]:
         if path in sys.path:
             sys.path.remove(path)
+
+    # Add in reverse order so gateway is at position 0
+    if _GATEWAY_PATH not in sys.path:
+        sys.path.insert(0, _GATEWAY_PATH)
+    if _SHARED_PATH not in sys.path:
+        sys.path.insert(0, _SHARED_PATH)
+    if _ROOT_PATH not in sys.path:
+        sys.path.insert(0, _ROOT_PATH)
+
+
+def _clear_service_modules():
+    """Clear gateway service modules from cache."""
+    modules_to_clear = []
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("app.") or mod_name == "app":
+            modules_to_clear.append(mod_name)
+        if mod_name.startswith("main.") or mod_name == "main":
+            modules_to_clear.append(mod_name)
+
+    for mod_name in modules_to_clear:
+        if mod_name in sys.modules:
+            del sys.modules[mod_name]
+
+    importlib.invalidate_caches()
 
 
 async def mock_call_tenant_service(*args, **kwargs):
@@ -70,21 +83,38 @@ async def mock_check_rate_limit(*args, **kwargs):
     return (True, 59, 60)
 
 
-def start_gateway_patches():
-    """Start all gateway patches - returns patcher objects to be stopped later."""
-    patchers = []
+@pytest.fixture(scope="module", autouse=True)
+def gateway_test_setup():
+    """Set up gateway test environment - add paths, clear modules, and start patches.
+
+    Using module scope ensures each test module gets a clean environment.
+    NOT using session scope to avoid polluting the entire test session.
+    """
+    print("[GATEWAY] gateway_test_setup fixture running...")
+
+    # Setup paths
+    _setup_paths()
+
+    # Clear any conflicting modules
+    _clear_service_modules()
+
+    # Import gateway modules to ensure they're available for patching
+    # This must be done after _setup_paths() and before patching
+    from app.middleware import tenant, rate_limit
+    from app.services import rate_limiter
 
     # Start patches for all locations where these functions are imported
+    # Patch at the module level where the functions are defined
     call_tenant_patcher = patch.multiple(
-        "app.middleware.tenant",
+        tenant,
         call_tenant_service=mock_call_tenant_service,
     )
     rate_limit_patcher = patch.multiple(
-        "app.middleware.rate_limit",
+        rate_limit,
         check_rate_limit=mock_check_rate_limit,
     )
     rate_limiter_patcher = patch.multiple(
-        "app.services.rate_limiter",
+        rate_limiter,
         check_rate_limit=mock_check_rate_limit,
     )
 
@@ -92,75 +122,13 @@ def start_gateway_patches():
     rate_limit_patcher.start()
     rate_limiter_patcher.start()
 
-    patchers.extend([call_tenant_patcher, rate_limit_patcher, rate_limiter_patcher])
-    return patchers
+    patchers = [call_tenant_patcher, rate_limit_patcher, rate_limiter_patcher]
 
+    yield patchers
 
-# Module-level cleanup
-_gateway_patchers = None
-_shared_imports = None
-
-
-def _import_shared():
-    """Import shared modules after paths are set."""
-    global _shared_imports
-    if _shared_imports is not None:
-        return _shared_imports
-
-    from sqlalchemy import select
-
-    from shared.models.base import Base
-    from shared.models.tenants import Tenant, APIKey
-    from shared.utils.auth import create_token
-
-    _shared_imports = {
-        "select": select,
-        "Base": Base,
-        "Tenant": Tenant,
-        "APIKey": APIKey,
-        "create_token": create_token,
-    }
-    return _shared_imports
-
-
-@pytest.fixture(scope="session", autouse=True)
-def gateway_test_setup():
-    """Set up gateway test environment - add paths and start patches.
-
-    Uses session scope so paths persist throughout the entire test session.
-    The fixture only runs once even if tests are collected from multiple files.
-
-    IMPORTANT: This fixture does NOT import main. We need to delay module
-    imports until after tenant-service tests have a chance to run first.
-    This prevents gateway's app modules from being cached before tenant-service
-    can clear them.
-    """
-    print("[GATEWAY] gateway_test_setup fixture running...")
-
-    # Import conftest helper functions
-    from .conftest import set_service_paths, clear_service_modules
-
-    print("[GATEWAY] Setting up gateway paths...")
-    # Set up gateway paths
-    set_service_paths("gateway")
-
-    print("[GATEWAY] Clearing service modules...")
-    # Clear any tenant-service modules that might interfere
-    clear_service_modules()
-
-    # Start patches (no need to import main yet)
-    global _gateway_patchers
-    _gateway_patchers = start_gateway_patches()
-
-    print("[GATEWAY] Patchers started")
-
-    yield
-
-    print("[GATEWAY] Stopping patchers...")
     # Stop patches
-    if _gateway_patchers:
-        for patcher in _gateway_patchers:
-            patcher.stop()
+    for patcher in patchers:
+        patcher.stop()
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -176,7 +144,19 @@ async def engine():
 @pytest_asyncio.fixture(scope="module")
 async def shared_models():
     """Import shared models after gateway_test_setup fixture runs."""
-    return _import_shared()
+    from sqlalchemy import select
+
+    from shared.models.base import Base
+    from shared.models.tenants import Tenant, APIKey
+    from shared.utils.auth import create_token
+
+    return {
+        "select": select,
+        "Base": Base,
+        "Tenant": Tenant,
+        "APIKey": APIKey,
+        "create_token": create_token,
+    }
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -223,7 +203,9 @@ async def app():
 @pytest_asyncio.fixture
 async def client(app):
     """Create an async test client."""
-    async with AsyncClient(app=app, base_url="http://test") as ac:
+    # Use ASGITransport for httpx >= 0.22
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
 
@@ -249,7 +231,6 @@ class TestHealth:
         assert "error" in data
 
 
-@pytest.mark.usefixtures("gateway_test_setup")
 class TestAuthentication:
     """Tests for authentication middleware."""
 
@@ -352,7 +333,7 @@ class TestAuthentication:
                 "is_active": True,
             }
 
-            # The global patch in setup_global_patches handles call_tenant_service
+            # The global patch in gateway_test_setup handles call_tenant_service
 
             # Mock HTTP client to return a successful response
             # Use a simple mock for the response instead of httpx.Response to avoid
@@ -378,7 +359,6 @@ class TestAuthentication:
             assert response.status_code == 200
 
 
-@pytest.mark.usefixtures("gateway_test_setup", "shared_models")
 class TestTenantMiddleware:
     """Tests for tenant middleware."""
 
@@ -424,7 +404,6 @@ class TestTenantMiddleware:
         assert "inactive" in data.get("error", "").lower()
 
 
-@pytest.mark.usefixtures("gateway_test_setup", "shared_models")
 class TestRateLimiting:
     """Tests for rate limiting middleware."""
 
@@ -562,7 +541,6 @@ class TestRateLimiting:
             os.environ.pop("RATE_LIMIT_PER_MINUTE", None)
 
 
-@pytest.mark.usefixtures("gateway_test_setup", "shared_models")
 class TestCORS:
     """Tests for CORS middleware."""
 
@@ -581,7 +559,6 @@ class TestCORS:
         assert "Access-Control-Allow-Origin" in response.headers
 
 
-@pytest.mark.usefixtures("gateway_test_setup", "shared_models")
 class TestProxyRouting:
     """Tests for proxy routing."""
 
@@ -724,7 +701,6 @@ class TestProxyRouting:
             assert response.status_code == 403
 
 
-@pytest.mark.usefixtures("gateway_test_setup", "shared_models")
 class TestAuthEndpoints:
     """Tests for authentication endpoints."""
 
